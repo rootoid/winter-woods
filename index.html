@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slender Clone Three.js</title>
+    <title>The Winter Woods</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Courier New', Courier, monospace; }
         #ui-layer {
@@ -48,7 +48,6 @@
             position: absolute;
             transform: translate(-50%, -50%);
         }
-        /* Changed player marker to an arrow shape using borders */
         #player-marker { 
             width: 0; 
             height: 0; 
@@ -56,7 +55,6 @@
             border-right: 6px solid transparent;
             border-bottom: 12px solid #0f0;
             z-index: 2; 
-            /* Will be rotated via JS */
         }
         .poi-marker { background: #d00; width: 10px; height: 10px; border-radius: 0; clip-path: polygon(20% 0%, 0% 20%, 30% 50%, 0% 80%, 20% 100%, 50% 70%, 80% 100%, 100% 80%, 70% 50%, 100% 20%, 80% 0%, 50% 30%); }
         
@@ -120,7 +118,8 @@
 <body>
 
     <div id="jumpscare-overlay" class="hidden">
-        <img src="Gemini_Generated_Image_3zvyfp3zvyfp3zvy.jpg" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'black\'/%3E%3Ccircle cx=\'50\' cy=\'40\' r=\'25\' fill=\'white\'/%3E%3Crect x=\'25\' y=\'65\' width=\'50\' height=\'35\' fill=\'white\'/%3E%3C/svg%3E'" alt="Jumpscare">
+        <!-- The JS below will try to find the image -->
+        <img id="jumpscare-img" src="" alt="Jumpscare">
     </div>
 
     <div id="noise-canvas-container"></div>
@@ -132,7 +131,6 @@
 
     <div id="map-overlay">
         <div id="player-marker" class="map-marker"></div>
-        <!-- POIs will be added via JS -->
     </div>
 
     <div id="start-screen">
@@ -151,6 +149,42 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
 
     <script>
+        // --- Smart Image Loader ---
+        // This attempts to load multiple filenames to solve case-sensitivity issues
+        function findJumpscareImage() {
+            const candidates = [
+                'jumpscare.png', 
+                'Jumpscare.png', 
+                'jumpscare.PNG', 
+                'jumpscare.jpg', 
+                'Jumpscare.jpg'
+            ];
+            const imgElement = document.getElementById('jumpscare-img');
+            
+            // Default fallback (Red Face SVG)
+            const fallback = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAxMDAgMTAwJz48cmVjdCB3aWR0aD0nMTAwJyBoZWlnaHQ9JzEwMCcgZmlsbD0nYmxhY2snLz48Y2lyY2xlIGN4PSczMCcgY3k9JzQwJyByPSc1JyBmaWxsPSJyZWQiIG9wYWNpdHk9JzAuOScvPjxjaXJjbGUgY3g9JzcwJyBjeT0nNDAnIHI9JzUnIGZpbGw9J3JlZCcgb3BhY2l0eT0nMC45Jy8+PHBhdGggZD0nTTMwIDc1IFE1MCA5NSA3MCA3NSBRNTAgODUgMzAgNzUnIGZpbGw9J2RhcmtyZWQnLz48L3N2Zz4=';
+
+            function tryLoad(index) {
+                if (index >= candidates.length) {
+                    console.warn("Could not find any jumpscare image. Using fallback.");
+                    imgElement.src = fallback;
+                    return;
+                }
+                
+                const testImg = new Image();
+                testImg.onload = function() {
+                    console.log("Jumpscare found: " + candidates[index]);
+                    imgElement.src = candidates[index];
+                };
+                testImg.onerror = function() {
+                    tryLoad(index + 1);
+                };
+                testImg.src = candidates[index];
+            }
+
+            tryLoad(0);
+        }
+        
         // --- Audio System ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         let jumpscareBuffer, footstepBuffer, pageBuffer, staticNode, staticGain;
@@ -162,16 +196,13 @@
             const jData = jumpscareBuffer.getChannelData(0);
             for (let i = 0; i < jData.length; i++) jData[i] = (Math.random() * 2 - 1) * (1 - i / jData.length);
             
-            // 2. Footstep (New "Snow Crunch" - Low frequency noise burst)
+            // 2. Footstep (Quiet Snow Crunch)
             footstepBuffer = audioCtx.createBuffer(1, sr * 0.15, sr);
             const fData = footstepBuffer.getChannelData(0);
             for (let i = 0; i < fData.length; i++) {
-                // White noise with envelope
                 const noise = (Math.random() * 2 - 1);
-                // Simple low pass filter simulation by averaging
                 const prev = i > 0 ? fData[i-1] : 0;
-                const filtered = (noise + prev) * 0.5; // rudimentary smoothing
-                fData[i] = filtered * Math.pow(1 - i / fData.length, 2);
+                fData[i] = ((noise + prev) * 0.5) * Math.pow(1 - i / fData.length, 2);
             }
 
             // 3. Page Pickup
@@ -219,12 +250,10 @@
         }
 
         function playFootstep() {
-             // Very quiet snow crunch (0.02 -> 0.005)
              playSound(footstepBuffer, 0.005, 0.7 + Math.random() * 0.2);
         }
 
         function playJumpscareSound() {
-            // Jumpscare volume (2.5 -> 0.5)
             playSound(jumpscareBuffer, 0.5, 1.0);
         }
 
@@ -235,33 +264,20 @@
             canvas.height = height;
             const ctx = canvas.getContext('2d');
             
-            // Fill background - lighter for snow
             ctx.fillStyle = type === 'ground' ? '#dddddd' : 
-                          type === 'bark' ? '#1a1208' : // Slightly lighter base for more contrast
+                          type === 'bark' ? '#0f0a05' : 
                           type === 'metal' ? '#2a2a2a' : '#333';
             ctx.fillRect(0, 0, width, height);
 
-            // Noise
             const idata = ctx.getImageData(0,0,width,height);
             const buffer = new Uint32Array(idata.data.buffer);
             for(let i=0; i<buffer.length; i++) {
-                const noiseChance = type === 'bark' ? 0.5 : 0.2;
-                if(Math.random() < noiseChance) {
+                if(Math.random() < 0.2) {
                     let val = Math.random() * 50;
                     if (type === 'metal') val += 20;
-                    if (type === 'ground') val += 200; // White noise
-                    
-                    if (type === 'bark') {
-                        // More colorful, irregular noise for bark
-                        const r = val + Math.random() * 40;
-                        const g = val + Math.random() * 20;
-                        const b = val;
-                        const noiseCol = (255 << 24) | (b << 16) | (g << 8) | r;
-                        buffer[i] = noiseCol;
-                    } else {
-                        const noiseCol = (255 << 24) | (val << 16) | (val << 8) | val;
-                        buffer[i] |= noiseCol; 
-                    }
+                    if (type === 'ground') val += 200;
+                    const noiseCol = (255 << 24) | (val << 16) | (val << 8) | val;
+                    buffer[i] |= noiseCol; 
                 }
             }
             ctx.putImageData(idata, 0, 0);
@@ -289,12 +305,11 @@
 
         // --- Terrain Logic ---
         function getTerrainHeight(x, z) {
-            // Simple rolling hills using sine waves
             const scale1 = 0.05;
             const scale2 = 0.02;
             const h = (Math.sin(x * scale1) * Math.cos(z * scale1) * 2) + 
                       (Math.sin(x * scale2 + 10) * Math.sin(z * scale2 + 5) * 4);
-            return Math.max(0, h); // Keep it mostly positive
+            return Math.max(0, h); 
         }
 
         // --- Game State ---
@@ -319,7 +334,7 @@
         let flashlight;
         let snowSystem;
         let lastStepTime = 0;
-        const stepInterval = 550; // Slower walking in snow
+        const stepInterval = 550;
 
         // --- Static Noise Visual ---
         const noiseCanvas = document.createElement('canvas');
@@ -385,7 +400,6 @@
             door.position.set(0, 1.5, 4.1);
             group.add(door);
             
-            // Roof with snow
             const roofGeo = new THREE.ConeGeometry(7, 3, 4);
             const roofMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
             const roof = new THREE.Mesh(roofGeo, roofMat);
@@ -449,8 +463,8 @@
 
             const woodMat = new THREE.MeshStandardMaterial({ map: texBark, color: 0x443322, roughness: 1 });
 
-            // Main Trunk - Taller and slightly thicker
-            const trunkHeight = 12 + Math.random() * 8; // 12 to 20 units tall
+            // Main Trunk - Tall
+            const trunkHeight = 15 + Math.random() * 10; // Taller: 15-25 units
             const trunkGeo = new THREE.CylinderGeometry(0.3, 0.6, trunkHeight, 8);
             const trunk = new THREE.Mesh(trunkGeo, woodMat);
             trunk.position.y = trunkHeight / 2;
@@ -458,18 +472,17 @@
             trunk.receiveShadow = true;
             group.add(trunk);
 
-            // Branches - More of them, and higher up
+            // Branches
             const numBranches = 15 + Math.random() * 10;
             for(let i=0; i<numBranches; i++) {
-                // Branches start from 1/4 up the trunk to near the top
-                const h = (trunkHeight * 0.25) + Math.random() * (trunkHeight * 0.7); 
-                const len = 2 + Math.random() * 4; // Longer branches
+                const h = (trunkHeight * 0.2) + Math.random() * (trunkHeight * 0.75); 
+                const len = 2 + Math.random() * 5; 
                 const branchGeo = new THREE.CylinderGeometry(0.05, 0.2, len, 6);
                 const branch = new THREE.Mesh(branchGeo, woodMat);
                 
                 branch.position.y = h;
                 const angle = Math.random() * Math.PI * 2;
-                const upAngle = (Math.random() - 0.2) * 0.6; // Mostly upwards
+                const upAngle = (Math.random() - 0.2) * 0.8;
 
                 branch.rotation.y = angle;
                 branch.rotation.z = Math.PI/2 - upAngle;
@@ -497,7 +510,7 @@
             const v3 = new THREE.Vector3();
 
             for(let i=0; i<particleCount; i++) {
-                v3.x = (Math.random() - 0.5) * 100; // range relative to camera
+                v3.x = (Math.random() - 0.5) * 100;
                 v3.y = Math.random() * 30;
                 v3.z = (Math.random() - 0.5) * 100;
                 positions.push(v3.x, v3.y, v3.z);
@@ -521,13 +534,9 @@
             const playerPos = camera.position;
 
             for(let i=0; i<positions.length; i+=3) {
-                // Drop snow
                 positions[i+1] -= 0.1;
-
-                // Reset if below ground
                 if(positions[i+1] < 0) {
                     positions[i+1] = 20 + Math.random() * 10;
-                    // Respawn relative to player to maintain illusion of infinite snow
                     positions[i] = playerPos.x + (Math.random()-0.5) * 80;
                     positions[i+2] = playerPos.z + (Math.random()-0.5) * 80;
                 }
@@ -535,13 +544,14 @@
             snowSystem.geometry.attributes.position.needsUpdate = true;
         }
 
-
         // --- Init ---
         function init() {
+            // Find Jumpscare
+            findJumpscareImage();
+
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x050505);
-            // Greatly increased fog density for low visibility
-            scene.fog = new THREE.FogExp2(0x050505, 0.09);
+            scene.fog = new THREE.FogExp2(0x050505, 0.04);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -581,7 +591,7 @@
                 }
             });
 
-            const ambientLight = new THREE.AmbientLight(0x222233); // Blueish night tint
+            const ambientLight = new THREE.AmbientLight(0x222233);
             scene.add(ambientLight);
 
             flashlight = new THREE.SpotLight(0xffffee, 5, 120, Math.PI / 4, 0.4, 1);
@@ -592,26 +602,16 @@
             camera.add(flashlight.target);
             scene.add(camera);
 
-            // Uneven Ground Geometry
             const groundGeo = new THREE.PlaneGeometry(300, 300, 64, 64);
             const vertices = groundGeo.attributes.position.array;
-            
-            // Note: Plane is created on XY plane. Z is the height in local space.
-            // We rotate it -PI/2 on X axis, so local Z becomes world Y in negative direction?
-            // Easier to modify the "z" of the plane geometry which will become Y after rotation.
-            
             for(let i=0; i<vertices.length; i+=3) {
-                // vertices[i] is x, vertices[i+1] is y, vertices[i+2] is z
-                // We use x and y to calculate z height
-                const x = vertices[i];
-                const y = vertices[i+1];
-                vertices[i+2] = getTerrainHeight(x, y); // Map texture coordinate Y to world Z
+                vertices[i+2] = getTerrainHeight(vertices[i], vertices[i+1]);
             }
             groundGeo.computeVertexNormals();
 
             const groundMat = new THREE.MeshStandardMaterial({ 
                 map: texGround,
-                color: 0xaaaaaa, // Snow color
+                color: 0xaaaaaa, 
                 roughness: 0.9,
                 bumpScale: 0.8
             });
@@ -635,7 +635,6 @@
             const enemyGroup = new THREE.Group();
             const blackMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
             
-            // Simplified Slender model
             const legGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.8);
             const leftLeg = new THREE.Mesh(legGeo, blackMat); leftLeg.position.set(-0.2, 0.9, 0); enemyGroup.add(leftLeg);
             const rightLeg = new THREE.Mesh(legGeo, blackMat); rightLeg.position.set(0.2, 0.9, 0); enemyGroup.add(rightLeg);
@@ -652,13 +651,11 @@
         }
 
         function generateWorld() {
-            // Place Landmarks
             createSilo(50, 50);
             createHouse(-50, -50);
             createTanks(-50, 50);
             createMonoliths(50, -50);
             
-            // Create Map Markers
             const mapDiv = document.getElementById('map-overlay');
             const old = document.querySelectorAll('.poi-marker');
             old.forEach(o => o.remove());
@@ -673,29 +670,26 @@
                 mapDiv.appendChild(mark);
             });
 
-            // Trees - More frequent
-            for (let i = 0; i < 500; i++) { // Increased from 200 to 500
-                const x = (Math.random() - 0.5) * 280; // Slightly wider spread
+            // Trees - Very Dense and Tall
+            for (let i = 0; i < 500; i++) {
+                const x = (Math.random() - 0.5) * 280;
                 const z = (Math.random() - 0.5) * 280;
                 
                 if (Math.abs(x) < 10 && Math.abs(z) < 10) continue;
-                if (landmarks.some(l => Math.hypot(l.x - x, l.z - z) < 8)) continue; // Reduced landmark clearance for density
+                if (landmarks.some(l => Math.hypot(l.x - x, l.z - z) < 8)) continue;
 
                 const tree = createDeadTree(x, z);
                 trees.push(tree);
             }
 
-            // Pages
-            spawnPageAt(50, 50, getTerrainHeight(50, 50) + 1.5); // Silo
-            spawnPageAt(-50, -50, getTerrainHeight(-50, -50) + 2); // House
-            spawnPageAt(-50, 50, getTerrainHeight(-50, 50) + 2); // Tanks
-            spawnPageAt(50, -50, getTerrainHeight(50, -50) + 1.5); // Rocks
+            spawnPageAt(50, 50, getTerrainHeight(50, 50) + 1.5);
+            spawnPageAt(-50, -50, getTerrainHeight(-50, -50) + 2);
+            spawnPageAt(-50, 50, getTerrainHeight(-50, 50) + 2);
+            spawnPageAt(50, -50, getTerrainHeight(50, -50) + 1.5);
             
-            // 4 Random tree pages
             const shuffled = [...trees].sort(() => 0.5 - Math.random());
             for(let i=0; i<4; i++) {
                 const t = shuffled[i];
-                // Offset from tree center
                 const px = t.position.x + 1;
                 const pz = t.position.z;
                 const py = getTerrainHeight(px, pz) + 1.5;
@@ -755,7 +749,6 @@
             pagesCollected = 0;
             enemyAggression = 1;
             document.getElementById('score').innerText = "Pages: 0/8";
-            // Check terrain height for spawn
             const spawnY = getTerrainHeight(0, 0) + 2;
             camera.position.set(0, spawnY, 0);
             velocity.set(0, 0, 0);
@@ -774,7 +767,6 @@
             camera.add(flashlight.target);
             scene.add(camera);
             
-            // Rebuild Ground with Terrain
             const groundGeo = new THREE.PlaneGeometry(300, 300, 64, 64);
             const vertices = groundGeo.attributes.position.array;
             for(let i=0; i<vertices.length; i+=3) {
@@ -829,7 +821,6 @@
                     p.active = false;
                     pagesCollected++;
                     document.getElementById('score').innerText = `Pages: ${pagesCollected}/${totalPages}`;
-                    // Page pickup volume (0.6 -> 0.1)
                     playSound(pageBuffer, 0.1, 1.0);
                     enemyAggression += 0.5;
                     if (pagesCollected === totalPages) gameOver(true);
@@ -853,9 +844,7 @@
             if (isInsideFrustum) {
                 const dirToEnemy = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
                 const raycaster = new THREE.Raycaster(playerPos, dirToEnemy, 0, dist);
-                // Intersect with simplified tree checks ideally, but full mesh check works here for small count
-                // Optimization: just check simple distance or ignore tree occlusion for simpler gameplay
-                hasLineOfSight = true; // Simplified for robustness
+                hasLineOfSight = true; 
             }
 
             enemy.userData.isVisible = isInsideFrustum && hasLineOfSight;
@@ -865,7 +854,6 @@
                 playerSanity -= drainRate;
                 const staticAmount = Math.min(1.0, 10 / (dist * dist));
                 updateNoise(staticAmount);
-                // Static volume (0.5 -> 0.1)
                 if (staticGain) staticGain.gain.setTargetAtTime(staticAmount * 0.1, audioCtx.currentTime, 0.1);
                 if (dist < 3) playerSanity = -1;
             } else {
@@ -892,14 +880,9 @@
             const px = 150 + (camera.position.x * 1.5);
             const py = 150 + (camera.position.z * 1.5);
             
-            // Get camera rotation Y (yaw)
-            // Camera looks down -Z by default.
-            // Vector looking direction
             const vector = new THREE.Vector3(0, 0, -1);
             vector.applyQuaternion(camera.quaternion);
-            // Angle in radians relative to North (negative z)
             const angle = Math.atan2(-vector.x, -vector.z);
-            // Convert to degrees for CSS
             const deg = angle * (180 / Math.PI);
 
             playerMarker.style.left = px + 'px';
@@ -934,7 +917,6 @@
                     }
                 }
                 
-                // Terrain Following
                 const camX = camera.position.x;
                 const camZ = camera.position.z;
                 const terrainH = getTerrainHeight(camX, camZ);
