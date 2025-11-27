@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slender Clone Three.js</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Courier New', Courier, monospace; }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #score {
+            color: #fff;
+            font-size: 24px;
+            text-shadow: 2px 2px 0 #000;
+        }
+        #controls-hint {
+            color: #aaa;
+            font-size: 14px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #map-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            height: 300px;
+            background: rgba(0, 20, 0, 0.9);
+            border: 2px solid #444;
+            display: none;
+            z-index: 50;
+            pointer-events: none;
+            border-radius: 4px;
+        }
+        .map-marker {
+            position: absolute;
+            transform: translate(-50%, -50%);
+        }
+        /* Changed player marker to an arrow shape using borders */
+        #player-marker { 
+            width: 0; 
+            height: 0; 
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 12px solid #0f0;
+            z-index: 2; 
+            /* Will be rotated via JS */
+        }
+        .poi-marker { background: #d00; width: 10px; height: 10px; border-radius: 0; clip-path: polygon(20% 0%, 0% 20%, 30% 50%, 0% 80%, 20% 100%, 50% 70%, 80% 100%, 100% 80%, 70% 50%, 100% 20%, 80% 0%, 50% 30%); }
+        
+        #static-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+        #noise-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 6;
+        }
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            z-index: 10;
+            cursor: pointer;
+        }
+        h1 { font-size: 48px; letter-spacing: 5px; color: #d00; text-transform: uppercase; margin-bottom: 10px; }
+        p { font-size: 18px; color: #ccc; }
+        .hidden { display: none !important; }
+        #jumpscare-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            pointer-events: none;
+        }
+        #jumpscare-overlay img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="jumpscare-overlay" class="hidden">
+        <img src="Gemini_Generated_Image_3zvyfp3zvyfp3zvy.jpg" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'black\'/%3E%3Ccircle cx=\'50\' cy=\'40\' r=\'25\' fill=\'white\'/%3E%3Crect x=\'25\' y=\'65\' width=\'50\' height=\'35\' fill=\'white\'/%3E%3C/svg%3E'" alt="Jumpscare">
+    </div>
+
+    <div id="noise-canvas-container"></div>
+    
+    <div id="ui-layer">
+        <div id="score">Pages: 0/8</div>
+        <div id="controls-hint">WASD Move | Mouse Look | 'M' Map | Find 8 Pages</div>
+    </div>
+
+    <div id="map-overlay">
+        <div id="player-marker" class="map-marker"></div>
+        <!-- POIs will be added via JS -->
+    </div>
+
+    <div id="start-screen">
+        <h1>Winter Woods</h1>
+        <p>Click to Start</p>
+        <p style="font-size: 12px; margin-top: 20px; color: #666;">It's cold. Don't look at him.</p>
+    </div>
+
+    <div id="game-over-screen" class="hidden">
+        <h1 id="end-title">Game Over</h1>
+        <p id="end-reason">He found you.</p>
+        <p>Click to Retry</p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+
+    <script>
+        // --- Audio System ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let jumpscareBuffer, footstepBuffer, pageBuffer, staticNode, staticGain;
+
+        function createProceduralSounds() {
+            const sr = audioCtx.sampleRate;
+            // 1. Jumpscare
+            jumpscareBuffer = audioCtx.createBuffer(1, sr * 0.8, sr);
+            const jData = jumpscareBuffer.getChannelData(0);
+            for (let i = 0; i < jData.length; i++) jData[i] = (Math.random() * 2 - 1) * (1 - i / jData.length);
+            
+            // 2. Footstep (New "Snow Crunch" - Low frequency noise burst)
+            footstepBuffer = audioCtx.createBuffer(1, sr * 0.15, sr);
+            const fData = footstepBuffer.getChannelData(0);
+            for (let i = 0; i < fData.length; i++) {
+                // White noise with envelope
+                const noise = (Math.random() * 2 - 1);
+                // Simple low pass filter simulation by averaging
+                const prev = i > 0 ? fData[i-1] : 0;
+                const filtered = (noise + prev) * 0.5; // rudimentary smoothing
+                fData[i] = filtered * Math.pow(1 - i / fData.length, 2);
+            }
+
+            // 3. Page Pickup
+            pageBuffer = audioCtx.createBuffer(1, sr * 1.5, sr);
+            const pData = pageBuffer.getChannelData(0);
+            for (let i = 0; i < pData.length; i++) {
+                const t = i / sr;
+                pData[i] = (Math.sin(t * 880 * Math.PI * 2) * 0.5 + Math.sin(t * 1760 * Math.PI * 2) * 0.25) * Math.exp(-t * 3);
+            }
+        }
+        createProceduralSounds();
+
+        function initStaticSound() {
+            const bufferSize = audioCtx.sampleRate * 2;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+            staticNode = audioCtx.createBufferSource();
+            staticNode.buffer = buffer;
+            staticNode.loop = true;
+            staticGain = audioCtx.createGain();
+            staticGain.gain.setValueAtTime(0, audioCtx.currentTime);
+
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.value = 1000;
+
+            staticNode.connect(filter);
+            filter.connect(staticGain);
+            staticGain.connect(audioCtx.destination);
+            staticNode.start();
+        }
+
+        function playSound(buffer, volume = 1, rate = 1) {
+            if (!buffer) return;
+            const source = audioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.playbackRate.value = rate;
+            const gain = audioCtx.createGain();
+            gain.gain.value = volume;
+            source.connect(gain);
+            gain.connect(audioCtx.destination);
+            source.start();
+        }
+
+        function playFootstep() {
+             // Very quiet snow crunch (0.02 -> 0.005)
+             playSound(footstepBuffer, 0.005, 0.7 + Math.random() * 0.2);
+        }
+
+        function playJumpscareSound() {
+            // Jumpscare volume (2.5 -> 0.5)
+            playSound(jumpscareBuffer, 0.5, 1.0);
+        }
+
+        // --- Procedural Textures ---
+        function createNoiseTexture(width, height, type = 'ground') {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            
+            // Fill background - lighter for snow
+            ctx.fillStyle = type === 'ground' ? '#dddddd' : 
+                          type === 'bark' ? '#1a1208' : // Slightly lighter base for more contrast
+                          type === 'metal' ? '#2a2a2a' : '#333';
+            ctx.fillRect(0, 0, width, height);
+
+            // Noise
+            const idata = ctx.getImageData(0,0,width,height);
+            const buffer = new Uint32Array(idata.data.buffer);
+            for(let i=0; i<buffer.length; i++) {
+                const noiseChance = type === 'bark' ? 0.5 : 0.2;
+                if(Math.random() < noiseChance) {
+                    let val = Math.random() * 50;
+                    if (type === 'metal') val += 20;
+                    if (type === 'ground') val += 200; // White noise
+                    
+                    if (type === 'bark') {
+                        // More colorful, irregular noise for bark
+                        const r = val + Math.random() * 40;
+                        const g = val + Math.random() * 20;
+                        const b = val;
+                        const noiseCol = (255 << 24) | (b << 16) | (g << 8) | r;
+                        buffer[i] = noiseCol;
+                    } else {
+                        const noiseCol = (255 << 24) | (val << 16) | (val << 8) | val;
+                        buffer[i] |= noiseCol; 
+                    }
+                }
+            }
+            ctx.putImageData(idata, 0, 0);
+
+            if (type === 'tiles') {
+                ctx.strokeStyle = '#444';
+                ctx.lineWidth = 2;
+                for(let i=0; i<width; i+=40) {
+                    ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,height); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(width,i); ctx.stroke();
+                }
+            }
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+
+        const texGround = createNoiseTexture(512, 512, 'ground');
+        texGround.repeat.set(20, 20);
+        const texBark = createNoiseTexture(256, 512, 'bark');
+        const texMetal = createNoiseTexture(256, 256, 'metal');
+        const texTiles = createNoiseTexture(256, 256, 'tiles');
+
+        // --- Terrain Logic ---
+        function getTerrainHeight(x, z) {
+            // Simple rolling hills using sine waves
+            const scale1 = 0.05;
+            const scale2 = 0.02;
+            const h = (Math.sin(x * scale1) * Math.cos(z * scale1) * 2) + 
+                      (Math.sin(x * scale2 + 10) * Math.sin(z * scale2 + 5) * 4);
+            return Math.max(0, h); // Keep it mostly positive
+        }
+
+        // --- Game State ---
+        let gameActive = false;
+        let pagesCollected = 0;
+        const totalPages = 8;
+        let playerSanity = 100;
+        let enemyAggression = 1;
+        let isMapOpen = false;
+        
+        // --- Three.js Globals ---
+        let scene, camera, renderer, controls;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let prevTime = performance.now();
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        
+        let trees = [];
+        let pages = [];
+        let landmarks = [];
+        let enemy;
+        let flashlight;
+        let snowSystem;
+        let lastStepTime = 0;
+        const stepInterval = 550; // Slower walking in snow
+
+        // --- Static Noise Visual ---
+        const noiseCanvas = document.createElement('canvas');
+        noiseCanvas.id = 'noise-canvas';
+        document.body.appendChild(noiseCanvas);
+        const noiseCtx = noiseCanvas.getContext('2d');
+        
+        function resizeNoise() {
+            noiseCanvas.width = window.innerWidth / 2;
+            noiseCanvas.height = window.innerHeight / 2;
+        }
+        window.addEventListener('resize', resizeNoise);
+        resizeNoise();
+
+        function updateNoise(opacity) {
+            noiseCanvas.style.opacity = opacity;
+            if (opacity <= 0.01) return;
+            const w = noiseCanvas.width;
+            const h = noiseCanvas.height;
+            const idata = noiseCtx.createImageData(w, h);
+            const buffer32 = new Uint32Array(idata.data.buffer);
+            for (let i = 0; i < buffer32.length; i++) {
+                buffer32[i] = (Math.random() < 0.5) ? 0xff000000 : 0xffffffff;
+            }
+            noiseCtx.putImageData(idata, 0, 0);
+        }
+
+        // --- Structures ---
+        function createSilo(x, z) {
+            const y = getTerrainHeight(x, z);
+            const group = new THREE.Group();
+            const geo = new THREE.CylinderGeometry(3, 3, 10, 16);
+            const mat = new THREE.MeshStandardMaterial({ map: texMetal, color: 0x884444 });
+            const cylinder = new THREE.Mesh(geo, mat);
+            cylinder.position.y = 5;
+            cylinder.castShadow = true;
+            group.add(cylinder);
+            
+            const capGeo = new THREE.SphereGeometry(3, 16, 8, 0, Math.PI * 2, 0, Math.PI/2);
+            const cap = new THREE.Mesh(capGeo, mat);
+            cap.position.y = 10;
+            group.add(cap);
+
+            group.position.set(x, y, z);
+            scene.add(group);
+            landmarks.push({ x, z, type: 'Silo' });
+            return group;
+        }
+
+        function createHouse(x, z) {
+            const y = getTerrainHeight(x, z);
+            const group = new THREE.Group();
+            const wallGeo = new THREE.BoxGeometry(8, 5, 8);
+            const wallMat = new THREE.MeshStandardMaterial({ map: texTiles, color: 0x555555 });
+            const walls = new THREE.Mesh(wallGeo, wallMat);
+            walls.position.y = 2.5;
+            walls.castShadow = true;
+            group.add(walls);
+
+            const doorGeo = new THREE.BoxGeometry(2, 3, 0.5);
+            const doorMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            const door = new THREE.Mesh(doorGeo, doorMat);
+            door.position.set(0, 1.5, 4.1);
+            group.add(door);
+            
+            // Roof with snow
+            const roofGeo = new THREE.ConeGeometry(7, 3, 4);
+            const roofMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const roof = new THREE.Mesh(roofGeo, roofMat);
+            roof.position.y = 6.5;
+            roof.rotation.y = Math.PI/4;
+            group.add(roof);
+
+            group.position.set(x, y, z);
+            scene.add(group);
+            landmarks.push({ x, z, type: 'House' });
+            return group;
+        }
+
+        function createTanks(x, z) {
+            const y = getTerrainHeight(x, z);
+            const group = new THREE.Group();
+            const geo = new THREE.BoxGeometry(4, 4, 8);
+            const mat = new THREE.MeshStandardMaterial({ map: texMetal, color: 0x334455 });
+            
+            const tank1 = new THREE.Mesh(geo, mat);
+            tank1.position.y = 2;
+            tank1.castShadow = true;
+            group.add(tank1);
+
+            const tank2 = new THREE.Mesh(geo, mat);
+            tank2.position.set(5, 2, -2);
+            tank2.rotation.y = 0.5;
+            tank2.castShadow = true;
+            group.add(tank2);
+
+            group.position.set(x, y, z);
+            scene.add(group);
+            landmarks.push({ x, z, type: 'Tanks' });
+            return group;
+        }
+
+        function createMonoliths(x, z) {
+            const y = getTerrainHeight(x, z);
+            const group = new THREE.Group();
+            const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+            
+            for(let i=0; i<5; i++) {
+                const h = 4 + Math.random() * 4;
+                const geo = new THREE.BoxGeometry(1 + Math.random(), h, 1 + Math.random());
+                const m = new THREE.Mesh(geo, mat);
+                m.position.set((Math.random()-0.5)*8, h/2, (Math.random()-0.5)*8);
+                m.rotation.y = Math.random();
+                m.castShadow = true;
+                group.add(m);
+            }
+            group.position.set(x, y, z);
+            scene.add(group);
+            landmarks.push({ x, z, type: 'Rocks' });
+            return group;
+        }
+
+        // --- Dead Tree Generator ---
+        function createDeadTree(x, z) {
+            const y = getTerrainHeight(x, z);
+            const group = new THREE.Group();
+
+            const woodMat = new THREE.MeshStandardMaterial({ map: texBark, color: 0x443322, roughness: 1 });
+
+            // Main Trunk - Taller and slightly thicker
+            const trunkHeight = 12 + Math.random() * 8; // 12 to 20 units tall
+            const trunkGeo = new THREE.CylinderGeometry(0.3, 0.6, trunkHeight, 8);
+            const trunk = new THREE.Mesh(trunkGeo, woodMat);
+            trunk.position.y = trunkHeight / 2;
+            trunk.castShadow = true;
+            trunk.receiveShadow = true;
+            group.add(trunk);
+
+            // Branches - More of them, and higher up
+            const numBranches = 15 + Math.random() * 10;
+            for(let i=0; i<numBranches; i++) {
+                // Branches start from 1/4 up the trunk to near the top
+                const h = (trunkHeight * 0.25) + Math.random() * (trunkHeight * 0.7); 
+                const len = 2 + Math.random() * 4; // Longer branches
+                const branchGeo = new THREE.CylinderGeometry(0.05, 0.2, len, 6);
+                const branch = new THREE.Mesh(branchGeo, woodMat);
+                
+                branch.position.y = h;
+                const angle = Math.random() * Math.PI * 2;
+                const upAngle = (Math.random() - 0.2) * 0.6; // Mostly upwards
+
+                branch.rotation.y = angle;
+                branch.rotation.z = Math.PI/2 - upAngle;
+                branch.translateY(len/2);
+
+                branch.castShadow = true;
+                group.add(branch);
+            }
+
+            group.position.set(x, y, z);
+            
+            group.rotation.y = Math.random() * Math.PI * 2;
+            const lean = 0.05;
+            group.rotation.x = (Math.random() - 0.5) * lean;
+            group.rotation.z = (Math.random() - 0.5) * lean;
+
+            scene.add(group);
+            return group;
+        }
+
+        function createSnowSystem() {
+            const particleCount = 2000;
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const v3 = new THREE.Vector3();
+
+            for(let i=0; i<particleCount; i++) {
+                v3.x = (Math.random() - 0.5) * 100; // range relative to camera
+                v3.y = Math.random() * 30;
+                v3.z = (Math.random() - 0.5) * 100;
+                positions.push(v3.x, v3.y, v3.z);
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            
+            const mat = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: 0.2,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            snowSystem = new THREE.Points(geo, mat);
+            scene.add(snowSystem);
+        }
+
+        function updateSnow() {
+            if(!snowSystem) return;
+            const positions = snowSystem.geometry.attributes.position.array;
+            const playerPos = camera.position;
+
+            for(let i=0; i<positions.length; i+=3) {
+                // Drop snow
+                positions[i+1] -= 0.1;
+
+                // Reset if below ground
+                if(positions[i+1] < 0) {
+                    positions[i+1] = 20 + Math.random() * 10;
+                    // Respawn relative to player to maintain illusion of infinite snow
+                    positions[i] = playerPos.x + (Math.random()-0.5) * 80;
+                    positions[i+2] = playerPos.z + (Math.random()-0.5) * 80;
+                }
+            }
+            snowSystem.geometry.attributes.position.needsUpdate = true;
+        }
+
+
+        // --- Init ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050505);
+            // Greatly increased fog density for low visibility
+            scene.fog = new THREE.FogExp2(0x050505, 0.09);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            controls = new THREE.PointerLockControls(camera, document.body);
+
+            const startScreen = document.getElementById('start-screen');
+            const gameOverScreen = document.getElementById('game-over-screen');
+
+            startScreen.addEventListener('click', () => {
+                controls.lock();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                if (!staticNode) initStaticSound();
+            });
+
+            gameOverScreen.addEventListener('click', () => {
+                resetGame();
+                controls.lock();
+            });
+
+            controls.addEventListener('lock', () => {
+                startScreen.classList.add('hidden');
+                gameOverScreen.classList.add('hidden');
+                gameActive = true;
+                if(staticGain) staticGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+            });
+
+            controls.addEventListener('unlock', () => {
+                gameActive = false;
+                if(staticGain) staticGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+                if(playerSanity > 0 && pagesCollected < totalPages) {
+                    startScreen.classList.remove('hidden');
+                }
+            });
+
+            const ambientLight = new THREE.AmbientLight(0x222233); // Blueish night tint
+            scene.add(ambientLight);
+
+            flashlight = new THREE.SpotLight(0xffffee, 5, 120, Math.PI / 4, 0.4, 1);
+            flashlight.position.set(0, 0, 0);
+            flashlight.castShadow = true;
+            flashlight.target.position.set(0, 0, -1);
+            camera.add(flashlight);
+            camera.add(flashlight.target);
+            scene.add(camera);
+
+            // Uneven Ground Geometry
+            const groundGeo = new THREE.PlaneGeometry(300, 300, 64, 64);
+            const vertices = groundGeo.attributes.position.array;
+            
+            // Note: Plane is created on XY plane. Z is the height in local space.
+            // We rotate it -PI/2 on X axis, so local Z becomes world Y in negative direction?
+            // Easier to modify the "z" of the plane geometry which will become Y after rotation.
+            
+            for(let i=0; i<vertices.length; i+=3) {
+                // vertices[i] is x, vertices[i+1] is y, vertices[i+2] is z
+                // We use x and y to calculate z height
+                const x = vertices[i];
+                const y = vertices[i+1];
+                vertices[i+2] = getTerrainHeight(x, y); // Map texture coordinate Y to world Z
+            }
+            groundGeo.computeVertexNormals();
+
+            const groundMat = new THREE.MeshStandardMaterial({ 
+                map: texGround,
+                color: 0xaaaaaa, // Snow color
+                roughness: 0.9,
+                bumpScale: 0.8
+            });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            createSnowSystem();
+            generateWorld();
+            createEnemy();
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            window.addEventListener('resize', onWindowResize);
+
+            animate();
+        }
+
+        function createEnemy() {
+            const enemyGroup = new THREE.Group();
+            const blackMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            
+            // Simplified Slender model
+            const legGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.8);
+            const leftLeg = new THREE.Mesh(legGeo, blackMat); leftLeg.position.set(-0.2, 0.9, 0); enemyGroup.add(leftLeg);
+            const rightLeg = new THREE.Mesh(legGeo, blackMat); rightLeg.position.set(0.2, 0.9, 0); enemyGroup.add(rightLeg);
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.2, 0.3), blackMat); body.position.set(0, 2.4, 0); enemyGroup.add(body);
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), new THREE.MeshBasicMaterial({ color: 0xffffff })); head.position.set(0, 3.3, 0); enemyGroup.add(head);
+            const armGeo = new THREE.CylinderGeometry(0.08, 0.08, 2);
+            const lArm = new THREE.Mesh(armGeo, blackMat); lArm.position.set(-0.45, 2.4, 0); lArm.rotation.z = 0.1; enemyGroup.add(lArm);
+            const rArm = new THREE.Mesh(armGeo, blackMat); rArm.position.set(0.45, 2.4, 0); rArm.rotation.z = -0.1; enemyGroup.add(rArm);
+
+            enemyGroup.position.set(0, -10, 0);
+            scene.add(enemyGroup);
+            enemy = enemyGroup;
+            enemy.userData = { lastTeleport: 0, isVisible: false, distance: 100 };
+        }
+
+        function generateWorld() {
+            // Place Landmarks
+            createSilo(50, 50);
+            createHouse(-50, -50);
+            createTanks(-50, 50);
+            createMonoliths(50, -50);
+            
+            // Create Map Markers
+            const mapDiv = document.getElementById('map-overlay');
+            const old = document.querySelectorAll('.poi-marker');
+            old.forEach(o => o.remove());
+
+            landmarks.forEach(lm => {
+                const mark = document.createElement('div');
+                mark.className = 'map-marker poi-marker';
+                const mx = 150 + (lm.x * 1.5);
+                const my = 150 + (lm.z * 1.5);
+                mark.style.left = mx + 'px';
+                mark.style.top = my + 'px';
+                mapDiv.appendChild(mark);
+            });
+
+            // Trees - More frequent
+            for (let i = 0; i < 500; i++) { // Increased from 200 to 500
+                const x = (Math.random() - 0.5) * 280; // Slightly wider spread
+                const z = (Math.random() - 0.5) * 280;
+                
+                if (Math.abs(x) < 10 && Math.abs(z) < 10) continue;
+                if (landmarks.some(l => Math.hypot(l.x - x, l.z - z) < 8)) continue; // Reduced landmark clearance for density
+
+                const tree = createDeadTree(x, z);
+                trees.push(tree);
+            }
+
+            // Pages
+            spawnPageAt(50, 50, getTerrainHeight(50, 50) + 1.5); // Silo
+            spawnPageAt(-50, -50, getTerrainHeight(-50, -50) + 2); // House
+            spawnPageAt(-50, 50, getTerrainHeight(-50, 50) + 2); // Tanks
+            spawnPageAt(50, -50, getTerrainHeight(50, -50) + 1.5); // Rocks
+            
+            // 4 Random tree pages
+            const shuffled = [...trees].sort(() => 0.5 - Math.random());
+            for(let i=0; i<4; i++) {
+                const t = shuffled[i];
+                // Offset from tree center
+                const px = t.position.x + 1;
+                const pz = t.position.z;
+                const py = getTerrainHeight(px, pz) + 1.5;
+                spawnPageAt(px, pz, py, true);
+            }
+        }
+
+        function spawnPageAt(x, z, y, rotate=false) {
+            const pageGeo = new THREE.PlaneGeometry(0.4, 0.5);
+            const pageMat = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, emissive: 0x222222 });
+            const page = new THREE.Mesh(pageGeo, pageMat);
+            page.position.set(x, y, z);
+            if(rotate) {
+                page.lookAt(x, y, z+5); 
+                page.rotation.y = Math.random() * 6;
+            } else {
+                page.lookAt(0, y, 0);
+            }
+            
+            const pl = new THREE.PointLight(0xffffff, 1, 5);
+            page.add(pl);
+            scene.add(page);
+            pages.push({ mesh: page, active: true });
+        }
+
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'ArrowUp': case 'KeyW': moveForward = true; break;
+                case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
+                case 'ArrowDown': case 'KeyS': moveBackward = true; break;
+                case 'ArrowRight': case 'KeyD': moveRight = true; break;
+                case 'KeyM': 
+                    isMapOpen = !isMapOpen; 
+                    document.getElementById('map-overlay').style.display = isMapOpen ? 'block' : 'none';
+                    break;
+            }
+        }
+
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'ArrowUp': case 'KeyW': moveForward = false; break;
+                case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
+                case 'ArrowDown': case 'KeyS': moveBackward = false; break;
+                case 'ArrowRight': case 'KeyD': moveRight = false; break;
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            resizeNoise();
+        }
+
+        function resetGame() {
+            playerSanity = 100;
+            pagesCollected = 0;
+            enemyAggression = 1;
+            document.getElementById('score').innerText = "Pages: 0/8";
+            // Check terrain height for spawn
+            const spawnY = getTerrainHeight(0, 0) + 2;
+            camera.position.set(0, spawnY, 0);
+            velocity.set(0, 0, 0);
+            pages.forEach(p => scene.remove(p.mesh));
+            pages = [];
+            trees.forEach(t => scene.remove(t));
+            trees = [];
+            landmarks = [];
+            while(scene.children.length > 0){ 
+                scene.remove(scene.children[0]); 
+            }
+            
+            const ambientLight = new THREE.AmbientLight(0x222233);
+            scene.add(ambientLight);
+            camera.add(flashlight);
+            camera.add(flashlight.target);
+            scene.add(camera);
+            
+            // Rebuild Ground with Terrain
+            const groundGeo = new THREE.PlaneGeometry(300, 300, 64, 64);
+            const vertices = groundGeo.attributes.position.array;
+            for(let i=0; i<vertices.length; i+=3) {
+                vertices[i+2] = getTerrainHeight(vertices[i], vertices[i+1]);
+            }
+            groundGeo.computeVertexNormals();
+            const groundMat = new THREE.MeshStandardMaterial({ map: texGround, color: 0xaaaaaa, roughness: 0.9, bumpScale: 0.8 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            createSnowSystem();
+            generateWorld();
+            createEnemy();
+            
+            document.getElementById('game-over-screen').classList.add('hidden');
+        }
+
+        function gameOver(win) {
+            gameActive = false;
+            controls.unlock();
+            const jumpscareOverlay = document.getElementById('jumpscare-overlay');
+            const screen = document.getElementById('game-over-screen');
+            const title = document.getElementById('end-title');
+            const reason = document.getElementById('end-reason');
+            
+            if (win) {
+                title.innerText = "ESCAPED";
+                title.style.color = "#4f4";
+                reason.innerText = "You collected all pages.";
+                screen.classList.remove('hidden');
+            } else {
+                playJumpscareSound();
+                jumpscareOverlay.classList.remove('hidden');
+                setTimeout(() => {
+                    jumpscareOverlay.classList.add('hidden');
+                    title.innerText = "GAME OVER";
+                    title.style.color = "#d00";
+                    reason.innerText = "The cold and the static took you.";
+                    screen.classList.remove('hidden');
+                }, 800);
+            }
+        }
+
+        function checkPageCollection() {
+            const playerPos = camera.position;
+            for (let p of pages) {
+                if (!p.active) continue;
+                if (playerPos.distanceTo(p.mesh.position) < 3.0) {
+                    scene.remove(p.mesh);
+                    p.active = false;
+                    pagesCollected++;
+                    document.getElementById('score').innerText = `Pages: ${pagesCollected}/${totalPages}`;
+                    // Page pickup volume (0.6 -> 0.1)
+                    playSound(pageBuffer, 0.1, 1.0);
+                    enemyAggression += 0.5;
+                    if (pagesCollected === totalPages) gameOver(true);
+                }
+            }
+        }
+
+        function updateEnemy(dt) {
+            if (!gameActive) return;
+            const playerPos = camera.position;
+            const dist = enemy.position.distanceTo(playerPos);
+            enemy.userData.distance = dist;
+
+            const frustum = new THREE.Frustum();
+            const projScreenMatrix = new THREE.Matrix4();
+            projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+            frustum.setFromProjectionMatrix(projScreenMatrix);
+            const isInsideFrustum = frustum.containsPoint(enemy.position);
+            
+            let hasLineOfSight = false;
+            if (isInsideFrustum) {
+                const dirToEnemy = new THREE.Vector3().subVectors(enemy.position, playerPos).normalize();
+                const raycaster = new THREE.Raycaster(playerPos, dirToEnemy, 0, dist);
+                // Intersect with simplified tree checks ideally, but full mesh check works here for small count
+                // Optimization: just check simple distance or ignore tree occlusion for simpler gameplay
+                hasLineOfSight = true; // Simplified for robustness
+            }
+
+            enemy.userData.isVisible = isInsideFrustum && hasLineOfSight;
+
+            if (enemy.userData.isVisible) {
+                const drainRate = (20 / (dist * dist + 0.1)) * (enemyAggression * 0.5);
+                playerSanity -= drainRate;
+                const staticAmount = Math.min(1.0, 10 / (dist * dist));
+                updateNoise(staticAmount);
+                // Static volume (0.5 -> 0.1)
+                if (staticGain) staticGain.gain.setTargetAtTime(staticAmount * 0.1, audioCtx.currentTime, 0.1);
+                if (dist < 3) playerSanity = -1;
+            } else {
+                updateNoise(0);
+                if (staticGain) staticGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.5);
+                const time = performance.now();
+                if (time - enemy.userData.lastTeleport > (5000 / enemyAggression)) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const spawnDist = 15 + Math.random() * 20; 
+                    const tx = playerPos.x + Math.sin(angle) * spawnDist;
+                    const tz = playerPos.z + Math.cos(angle) * spawnDist;
+                    const ty = getTerrainHeight(tx, tz);
+                    enemy.position.set(tx, ty, tz);
+                    enemy.lookAt(playerPos.x, ty, playerPos.z);
+                    enemy.userData.lastTeleport = time;
+                }
+            }
+            if (playerSanity <= 0) gameOver(false);
+        }
+
+        function updateMap() {
+            if(!isMapOpen) return;
+            const playerMarker = document.getElementById('player-marker');
+            const px = 150 + (camera.position.x * 1.5);
+            const py = 150 + (camera.position.z * 1.5);
+            
+            // Get camera rotation Y (yaw)
+            // Camera looks down -Z by default.
+            // Vector looking direction
+            const vector = new THREE.Vector3(0, 0, -1);
+            vector.applyQuaternion(camera.quaternion);
+            // Angle in radians relative to North (negative z)
+            const angle = Math.atan2(-vector.x, -vector.z);
+            // Convert to degrees for CSS
+            const deg = angle * (180 / Math.PI);
+
+            playerMarker.style.left = px + 'px';
+            playerMarker.style.top = py + 'px';
+            playerMarker.style.transform = `translate(-50%, -50%) rotate(${deg}deg)`;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (gameActive) {
+                const time = performance.now();
+                const delta = (time - prevTime) / 1000;
+
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize();
+
+                if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+                
+                if (moveForward || moveBackward || moveLeft || moveRight) {
+                    if (time - lastStepTime > stepInterval) {
+                        playFootstep();
+                        lastStepTime = time;
+                    }
+                }
+                
+                // Terrain Following
+                const camX = camera.position.x;
+                const camZ = camera.position.z;
+                const terrainH = getTerrainHeight(camX, camZ);
+                camera.position.y = terrainH + 2;
+
+                checkPageCollection();
+                updateEnemy(delta);
+                updateMap();
+                updateSnow();
+                prevTime = time;
+            }
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
